@@ -9,7 +9,6 @@ const app = express();
 
 const PORT = Number(process.env.PORT || 3000);
 const BOT_TOKEN = process.env.BOT_TOKEN;
-
 const FRONTEND_ORIGIN =
   process.env.FRONTEND_ORIGIN ||
   "https://snowice47.github.io";
@@ -22,20 +21,21 @@ if (!process.env.DATABASE_URL) {
   throw new Error("DATABASE_URL is missing");
 }
 
-// ---------------------------------------------------------
+// ============================================================
 // DATABASE
-// ---------------------------------------------------------
+// ============================================================
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === "production"
-    ? { rejectUnauthorized: false }
-    : false
+  ssl:
+    process.env.NODE_ENV === "production"
+      ? { rejectUnauthorized: false }
+      : false
 });
 
-// ---------------------------------------------------------
+// ============================================================
 // APP
-// ---------------------------------------------------------
+// ============================================================
 
 app.set("trust proxy", 1);
 
@@ -60,9 +60,9 @@ app.use(
   })
 );
 
-// ---------------------------------------------------------
-// DATABASE INITIALIZATION
-// ---------------------------------------------------------
+// ============================================================
+// DATABASE SETUP
+// ============================================================
 
 async function initializeDatabase() {
   await pool.query(`
@@ -81,11 +81,19 @@ async function initializeDatabase() {
       last_seen BIGINT NOT NULL
     )
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS daily_rewards (
+      telegram_id BIGINT PRIMARY KEY,
+      streak INTEGER NOT NULL DEFAULT 0,
+      last_claim_date TEXT
+    )
+  `);
 }
 
-// ---------------------------------------------------------
-// TELEGRAM INIT DATA VALIDATION
-// ---------------------------------------------------------
+// ============================================================
+// TELEGRAM VALIDATION
+// ============================================================
 
 function validateTelegramInitData(initData) {
   if (!initData || typeof initData !== "string") {
@@ -103,7 +111,6 @@ function validateTelegramInitData(initData) {
 
   const now = Math.floor(Date.now() / 1000);
 
-  // Don't accept very old authentication data.
   if (
     authDate > now + 60 ||
     now - authDate > 24 * 60 * 60
@@ -128,11 +135,15 @@ function validateTelegramInitData(initData) {
     .update(dataCheckString)
     .digest("hex");
 
-  const receivedBuffer = Buffer.from(receivedHash, "hex");
-  const calculatedBuffer = Buffer.from(calculatedHash, "hex");
+  const receivedBuffer =
+    Buffer.from(receivedHash, "hex");
+
+  const calculatedBuffer =
+    Buffer.from(calculatedHash, "hex");
 
   if (
-    receivedBuffer.length !== calculatedBuffer.length ||
+    receivedBuffer.length !==
+      calculatedBuffer.length ||
     !crypto.timingSafeEqual(
       calculatedBuffer,
       receivedBuffer
@@ -164,19 +175,17 @@ function validateTelegramInitData(initData) {
   return user;
 }
 
-// ---------------------------------------------------------
-// AUTH MIDDLEWARE
-// ---------------------------------------------------------
+// ============================================================
+// AUTHENTICATION MIDDLEWARE
+// ============================================================
 
 function authenticate(req, res, next) {
   try {
     const initData =
       req.headers["x-telegram-init-data"];
 
-    const telegramUser =
+    req.telegramUser =
       validateTelegramInitData(initData);
-
-    req.telegramUser = telegramUser;
 
     next();
   } catch (error) {
@@ -186,12 +195,13 @@ function authenticate(req, res, next) {
   }
 }
 
-// ---------------------------------------------------------
-// ENERGY REGENERATION
-// ---------------------------------------------------------
+// ============================================================
+// ENERGY CALCULATION
+// ============================================================
 
 function calculateCurrentEnergy(user) {
-  const now = Math.floor(Date.now() / 1000);
+  const now =
+    Math.floor(Date.now() / 1000);
 
   const elapsed =
     Math.max(
@@ -208,9 +218,9 @@ function calculateCurrentEnergy(user) {
   );
 }
 
-// ---------------------------------------------------------
+// ============================================================
 // GET OR CREATE USER
-// ---------------------------------------------------------
+// ============================================================
 
 async function getOrCreateUser(telegramUser) {
   const telegramId =
@@ -278,9 +288,49 @@ async function getOrCreateUser(telegramUser) {
   return result.rows[0];
 }
 
-// ---------------------------------------------------------
+// ============================================================
+// FORMAT USER
+// ============================================================
+
+function formatUser(user, currentEnergy = null) {
+  return {
+    telegramId:
+      String(user.telegram_id),
+
+    username:
+      user.username,
+
+    firstName:
+      user.first_name,
+
+    coins:
+      Number(user.coins),
+
+    energy:
+      currentEnergy === null
+        ? Number(user.energy)
+        : Number(currentEnergy),
+
+    maxEnergy:
+      Number(user.max_energy),
+
+    tapPower:
+      Number(user.tap_power),
+
+    autoMiner:
+      Number(user.auto_miner),
+
+    level:
+      Number(user.level),
+
+    totalTaps:
+      Number(user.total_taps)
+  };
+}
+
+// ============================================================
 // HEALTH CHECK
-// ---------------------------------------------------------
+// ============================================================
 
 app.get("/", async (req, res) => {
   try {
@@ -291,7 +341,9 @@ app.get("/", async (req, res) => {
       status: "online",
       database: "connected"
     });
-  } catch {
+  } catch (error) {
+    console.error(error);
+
     res.status(503).json({
       name: "Mints Coin API",
       status: "database_error"
@@ -299,9 +351,9 @@ app.get("/", async (req, res) => {
   }
 });
 
-// ---------------------------------------------------------
-// LOGIN
-// ---------------------------------------------------------
+// ============================================================
+// AUTH
+// ============================================================
 
 app.post(
   "/api/auth",
@@ -334,39 +386,12 @@ app.post(
       );
 
       res.json({
-        user: {
-          telegramId:
-            String(user.telegram_id),
-
-          username:
-            user.username,
-
-          firstName:
-            user.first_name,
-
-          coins:
-            Number(user.coins),
-
-          energy:
-            currentEnergy,
-
-          maxEnergy:
-            Number(user.max_energy),
-
-          tapPower:
-            Number(user.tap_power),
-
-          autoMiner:
-            Number(user.auto_miner),
-
-          level:
-            Number(user.level),
-
-          totalTaps:
-            Number(user.total_taps)
-        }
+        user:
+          formatUser(
+            user,
+            currentEnergy
+          )
       });
-
     } catch (error) {
       console.error(error);
 
@@ -377,9 +402,9 @@ app.post(
   }
 );
 
-// ---------------------------------------------------------
-// GET CURRENT PLAYER
-// ---------------------------------------------------------
+// ============================================================
+// GET PLAYER
+// ============================================================
 
 app.get(
   "/api/me",
@@ -411,38 +436,12 @@ app.get(
         ]
       );
 
-      res.json({
-        telegramId:
-          String(user.telegram_id),
-
-        username:
-          user.username,
-
-        firstName:
-          user.first_name,
-
-        coins:
-          Number(user.coins),
-
-        energy:
-          currentEnergy,
-
-        maxEnergy:
-          Number(user.max_energy),
-
-        tapPower:
-          Number(user.tap_power),
-
-        autoMiner:
-          Number(user.auto_miner),
-
-        level:
-          Number(user.level),
-
-        totalTaps:
-          Number(user.total_taps)
-      });
-
+      res.json(
+        formatUser(
+          user,
+          currentEnergy
+        )
+      );
     } catch (error) {
       console.error(error);
 
@@ -453,15 +452,14 @@ app.get(
   }
 );
 
-// ---------------------------------------------------------
+// ============================================================
 // SECURE TAP
-// ---------------------------------------------------------
+// ============================================================
 
 app.post(
   "/api/tap",
   authenticate,
   async (req, res) => {
-
     const client =
       await pool.connect();
 
@@ -506,7 +504,8 @@ app.post(
         Number(user.tap_power);
 
       const newCoins =
-        Number(user.coins) + reward;
+        Number(user.coins) +
+        reward;
 
       const newEnergy =
         currentEnergy - 1;
@@ -547,13 +546,23 @@ app.post(
       await client.query("COMMIT");
 
       res.json({
-        coins: newCoins,
-        energy: newEnergy,
+        coins:
+          newCoins,
+
+        energy:
+          newEnergy,
+
         maxEnergy:
           Number(user.max_energy),
-        tapPower: reward,
-        level: newLevel,
-        totalTaps: newTotalTaps
+
+        tapPower:
+          reward,
+
+        level:
+          newLevel,
+
+        totalTaps:
+          newTotalTaps
       });
 
     } catch (error) {
@@ -571,25 +580,264 @@ app.post(
   }
 );
 
-// ---------------------------------------------------------
-// ERROR HANDLER
-// ---------------------------------------------------------
+// ============================================================
+// DAILY REWARD
+// ============================================================
+
+app.post(
+  "/api/rewards/daily",
+  authenticate,
+  async (req, res) => {
+
+    const client =
+      await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      const telegramId =
+        String(req.telegramUser.id);
+
+      const rewardSchedule = [
+        200,
+        300,
+        500,
+        750,
+        1000,
+        1500,
+        2500
+      ];
+
+      /*
+        Use UTC calendar dates so all servers
+        behave consistently.
+      */
+      const today =
+        new Date()
+          .toISOString()
+          .slice(0, 10);
+
+      const rewardResult =
+        await client.query(
+          `
+          SELECT *
+          FROM daily_rewards
+          WHERE telegram_id = $1
+          FOR UPDATE
+          `,
+          [telegramId]
+        );
+
+      let streak = 0;
+      let lastClaimDate = null;
+
+      if (rewardResult.rows.length > 0) {
+        streak =
+          Number(
+            rewardResult.rows[0].streak
+          ) || 0;
+
+        lastClaimDate =
+          rewardResult.rows[0]
+            .last_claim_date;
+      }
+
+      // Prevent two claims on the same day
+      if (
+        lastClaimDate === today
+      ) {
+        await client.query(
+          "ROLLBACK"
+        );
+
+        return res.status(400).json({
+          error:
+            "Daily reward already claimed"
+        });
+      }
+
+      let nextStreak = 1;
+
+      // Continue streak if yesterday was claimed
+      if (lastClaimDate) {
+
+        const previous =
+          new Date(
+            `${lastClaimDate}T00:00:00Z`
+          );
+
+        const current =
+          new Date(
+            `${today}T00:00:00Z`
+          );
+
+        const difference =
+          Math.floor(
+            (
+              current.getTime() -
+              previous.getTime()
+            ) /
+            86400000
+          );
+
+        if (difference === 1) {
+          nextStreak =
+            streak + 1;
+        }
+      }
+
+      // Restart after day 7
+      if (nextStreak > 7) {
+        nextStreak = 1;
+      }
+
+      const reward =
+        rewardSchedule[
+          nextStreak - 1
+        ];
+
+      // Add reward on server
+      const userResult =
+        await client.query(
+          `
+          UPDATE users
+          SET coins = coins + $1,
+              level =
+                FLOOR(
+                  (coins + $1) / 1000
+                ) + 1
+          WHERE telegram_id = $2
+          RETURNING
+            telegram_id,
+            username,
+            first_name,
+            coins,
+            energy,
+            max_energy,
+            tap_power,
+            auto_miner,
+            level,
+            total_taps
+          `,
+          [
+            reward,
+            telegramId
+          ]
+        );
+
+      if (
+        userResult.rows.length === 0
+      ) {
+        throw new Error(
+          "Player account not found"
+        );
+      }
+
+      // Save reward claim
+      await client.query(
+        `
+        INSERT INTO daily_rewards (
+          telegram_id,
+          streak,
+          last_claim_date
+        )
+        VALUES ($1, $2, $3)
+        ON CONFLICT (telegram_id)
+        DO UPDATE SET
+          streak =
+            EXCLUDED.streak,
+          last_claim_date =
+            EXCLUDED.last_claim_date
+        `,
+        [
+          telegramId,
+          nextStreak,
+          today
+        ]
+      );
+
+      await client.query("COMMIT");
+
+      const updatedUser =
+        userResult.rows[0];
+
+      res.json({
+        reward,
+        streak:
+          nextStreak,
+        coins:
+          Number(
+            updatedUser.coins
+          ),
+        energy:
+          Number(
+            updatedUser.energy
+          ),
+        maxEnergy:
+          Number(
+            updatedUser.max_energy
+          ),
+        tapPower:
+          Number(
+            updatedUser.tap_power
+          ),
+        autoMiner:
+          Number(
+            updatedUser.auto_miner
+          ),
+        level:
+          Number(
+            updatedUser.level
+          ),
+        totalTaps:
+          Number(
+            updatedUser.total_taps
+          )
+      });
+
+    } catch (error) {
+
+      await client.query(
+        "ROLLBACK"
+      );
+
+      console.error(
+        "Daily reward error:",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          "Could not claim daily reward"
+      });
+
+    } finally {
+      client.release();
+    }
+  }
+);
+
+// ============================================================
+// SERVER ERROR HANDLER
+// ============================================================
 
 app.use(
   (error, req, res, next) => {
     console.error(error);
 
     res.status(500).json({
-      error: "Internal server error"
+      error:
+        "Internal server error"
     });
   }
 );
 
-// ---------------------------------------------------------
-// START
-// ---------------------------------------------------------
+// ============================================================
+// START SERVER
+// ============================================================
 
 async function start() {
+
   await initializeDatabase();
 
   app.listen(
@@ -603,11 +851,14 @@ async function start() {
   );
 }
 
-start().catch((error) => {
-  console.error(
-    "Failed to start server:",
-    error
-  );
+start().catch(
+  (error) => {
 
-  process.exit(1);
-});
+    console.error(
+      "Failed to start Mints Coin API:",
+      error
+    );
+
+    process.exit(1);
+  }
+);
