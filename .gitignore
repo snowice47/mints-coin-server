@@ -1,0 +1,4 @@
+node_modules/
+.env
+mints.db
+*.log
