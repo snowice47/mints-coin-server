@@ -9,6 +9,7 @@ const app = express();
 
 const PORT = Number(process.env.PORT || 3000);
 const BOT_TOKEN = process.env.BOT_TOKEN;
+
 const FRONTEND_ORIGIN =
   process.env.FRONTEND_ORIGIN ||
   "https://snowice47.github.io";
@@ -27,6 +28,7 @@ if (!process.env.DATABASE_URL) {
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
+
   ssl:
     process.env.NODE_ENV === "production"
       ? { rejectUnauthorized: false }
@@ -65,6 +67,7 @@ app.use(
 // ============================================================
 
 async function initializeDatabase() {
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       telegram_id BIGINT PRIMARY KEY,
@@ -89,6 +92,16 @@ async function initializeDatabase() {
       last_claim_date TEXT
     )
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS level_rewards (
+      telegram_id BIGINT NOT NULL,
+      level INTEGER NOT NULL,
+      reward BIGINT NOT NULL,
+      claimed_at BIGINT NOT NULL,
+      PRIMARY KEY (telegram_id, level)
+    )
+  `);
 }
 
 // ============================================================
@@ -96,50 +109,92 @@ async function initializeDatabase() {
 // ============================================================
 
 function validateTelegramInitData(initData) {
-  if (!initData || typeof initData !== "string") {
-    throw new Error("Missing Telegram initData");
+
+  if (
+    !initData ||
+    typeof initData !== "string"
+  ) {
+    throw new Error(
+      "Missing Telegram initData"
+    );
   }
 
-  const params = new URLSearchParams(initData);
+  const params =
+    new URLSearchParams(initData);
 
-  const receivedHash = params.get("hash");
-  const authDate = Number(params.get("auth_date"));
+  const receivedHash =
+    params.get("hash");
 
-  if (!receivedHash || !authDate) {
-    throw new Error("Invalid Telegram data");
+  const authDate =
+    Number(params.get("auth_date"));
+
+  if (
+    !receivedHash ||
+    !authDate
+  ) {
+    throw new Error(
+      "Invalid Telegram data"
+    );
   }
 
-  const now = Math.floor(Date.now() / 1000);
+  const now =
+    Math.floor(
+      Date.now() / 1000
+    );
 
   if (
     authDate > now + 60 ||
-    now - authDate > 24 * 60 * 60
+    now - authDate >
+      24 * 60 * 60
   ) {
-    throw new Error("Telegram authorization expired");
+    throw new Error(
+      "Telegram authorization expired"
+    );
   }
 
   params.delete("hash");
 
-  const dataCheckString = [...params.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([key, value]) => `${key}=${value}`)
-    .join("\n");
+  const dataCheckString =
+    [...params.entries()]
+      .sort(
+        ([a], [b]) =>
+          a.localeCompare(b)
+      )
+      .map(
+        ([key, value]) =>
+          `${key}=${value}`
+      )
+      .join("\n");
 
-  const secretKey = crypto
-    .createHmac("sha256", "WebAppData")
-    .update(BOT_TOKEN)
-    .digest();
+  const secretKey =
+    crypto
+      .createHmac(
+        "sha256",
+        "WebAppData"
+      )
+      .update(BOT_TOKEN)
+      .digest();
 
-  const calculatedHash = crypto
-    .createHmac("sha256", secretKey)
-    .update(dataCheckString)
-    .digest("hex");
+  const calculatedHash =
+    crypto
+      .createHmac(
+        "sha256",
+        secretKey
+      )
+      .update(dataCheckString)
+      .digest("hex");
 
   const receivedBuffer =
-    Buffer.from(receivedHash, "hex");
+    Buffer.from(
+      receivedHash,
+      "hex"
+    );
 
   const calculatedBuffer =
-    Buffer.from(calculatedHash, "hex");
+    Buffer.from(
+      calculatedHash,
+      "hex"
+    );
 
   if (
     receivedBuffer.length !==
@@ -154,22 +209,30 @@ function validateTelegramInitData(initData) {
     );
   }
 
-  const userJson = params.get("user");
+  const userJson =
+    params.get("user");
 
   if (!userJson) {
-    throw new Error("Telegram user missing");
+    throw new Error(
+      "Telegram user missing"
+    );
   }
 
   let user;
 
   try {
-    user = JSON.parse(userJson);
+    user =
+      JSON.parse(userJson);
   } catch {
-    throw new Error("Invalid Telegram user");
+    throw new Error(
+      "Invalid Telegram user"
+    );
   }
 
   if (!user.id) {
-    throw new Error("Telegram user ID missing");
+    throw new Error(
+      "Telegram user ID missing"
+    );
   }
 
   return user;
@@ -179,19 +242,32 @@ function validateTelegramInitData(initData) {
 // AUTHENTICATION MIDDLEWARE
 // ============================================================
 
-function authenticate(req, res, next) {
+function authenticate(
+  req,
+  res,
+  next
+) {
+
   try {
+
     const initData =
-      req.headers["x-telegram-init-data"];
+      req.headers[
+        "x-telegram-init-data"
+      ];
 
     req.telegramUser =
-      validateTelegramInitData(initData);
+      validateTelegramInitData(
+        initData
+      );
 
     next();
+
   } catch (error) {
+
     res.status(401).json({
       error: "Unauthorized"
     });
+
   }
 }
 
@@ -199,22 +275,34 @@ function authenticate(req, res, next) {
 // ENERGY CALCULATION
 // ============================================================
 
-function calculateCurrentEnergy(user) {
+function calculateCurrentEnergy(
+  user
+) {
+
   const now =
-    Math.floor(Date.now() / 1000);
+    Math.floor(
+      Date.now() / 1000
+    );
 
   const elapsed =
     Math.max(
       0,
-      now - Number(user.last_energy_update)
+      now -
+        Number(
+          user.last_energy_update
+        )
     );
 
   const regenerated =
     Math.floor(elapsed);
 
   return Math.min(
-    Number(user.max_energy),
-    Number(user.energy) + regenerated
+    Number(
+      user.max_energy
+    ),
+    Number(
+      user.energy
+    ) + regenerated
   );
 }
 
@@ -222,23 +310,34 @@ function calculateCurrentEnergy(user) {
 // GET OR CREATE USER
 // ============================================================
 
-async function getOrCreateUser(telegramUser) {
+async function getOrCreateUser(
+  telegramUser
+) {
+
   const telegramId =
-    String(telegramUser.id);
+    String(
+      telegramUser.id
+    );
 
   const now =
-    Math.floor(Date.now() / 1000);
+    Math.floor(
+      Date.now() / 1000
+    );
 
-  let result = await pool.query(
-    `
-    SELECT *
-    FROM users
-    WHERE telegram_id = $1
-    `,
-    [telegramId]
-  );
+  let result =
+    await pool.query(
+      `
+      SELECT *
+      FROM users
+      WHERE telegram_id = $1
+      `,
+      [telegramId]
+    );
 
-  if (result.rows.length === 0) {
+  if (
+    result.rows.length === 0
+  ) {
+
     await pool.query(
       `
       INSERT INTO users (
@@ -252,13 +351,17 @@ async function getOrCreateUser(telegramUser) {
       `,
       [
         telegramId,
-        telegramUser.username || null,
-        telegramUser.first_name || "",
+        telegramUser.username ||
+          null,
+        telegramUser.first_name ||
+          "",
         now,
         now
       ]
     );
+
   } else {
+
     await pool.query(
       `
       UPDATE users
@@ -268,22 +371,25 @@ async function getOrCreateUser(telegramUser) {
       WHERE telegram_id = $4
       `,
       [
-        telegramUser.username || null,
-        telegramUser.first_name || "",
+        telegramUser.username ||
+          null,
+        telegramUser.first_name ||
+          "",
         now,
         telegramId
       ]
     );
   }
 
-  result = await pool.query(
-    `
-    SELECT *
-    FROM users
-    WHERE telegram_id = $1
-    `,
-    [telegramId]
-  );
+  result =
+    await pool.query(
+      `
+      SELECT *
+      FROM users
+      WHERE telegram_id = $1
+      `,
+      [telegramId]
+    );
 
   return result.rows[0];
 }
@@ -292,10 +398,17 @@ async function getOrCreateUser(telegramUser) {
 // FORMAT USER
 // ============================================================
 
-function formatUser(user, currentEnergy = null) {
+function formatUser(
+  user,
+  currentEnergy = null
+) {
+
   return {
+
     telegramId:
-      String(user.telegram_id),
+      String(
+        user.telegram_id
+      ),
 
     username:
       user.username,
@@ -304,27 +417,44 @@ function formatUser(user, currentEnergy = null) {
       user.first_name,
 
     coins:
-      Number(user.coins),
+      Number(
+        user.coins
+      ),
 
     energy:
       currentEnergy === null
-        ? Number(user.energy)
-        : Number(currentEnergy),
+        ? Number(
+            user.energy
+          )
+        : Number(
+            currentEnergy
+          ),
 
     maxEnergy:
-      Number(user.max_energy),
+      Number(
+        user.max_energy
+      ),
 
     tapPower:
-      Number(user.tap_power),
+      Number(
+        user.tap_power
+      ),
 
     autoMiner:
-      Number(user.auto_miner),
+      Number(
+        user.auto_miner
+      ),
 
     level:
-      Number(user.level),
+      Number(
+        user.level
+      ),
 
     totalTaps:
-      Number(user.total_taps)
+      Number(
+        user.total_taps
+      )
+
   };
 }
 
@@ -332,24 +462,47 @@ function formatUser(user, currentEnergy = null) {
 // HEALTH CHECK
 // ============================================================
 
-app.get("/", async (req, res) => {
-  try {
-    await pool.query("SELECT 1");
+app.get(
+  "/",
+  async (req, res) => {
 
-    res.json({
-      name: "Mints Coin API",
-      status: "online",
-      database: "connected"
-    });
-  } catch (error) {
-    console.error(error);
+    try {
 
-    res.status(503).json({
-      name: "Mints Coin API",
-      status: "database_error"
-    });
+      await pool.query(
+        "SELECT 1"
+      );
+
+      res.json({
+
+        name:
+          "Mints Coin API",
+
+        status:
+          "online",
+
+        database:
+          "connected"
+
+      });
+
+    } catch (error) {
+
+      console.error(error);
+
+      res.status(503).json({
+
+        name:
+          "Mints Coin API",
+
+        status:
+          "database_error"
+
+      });
+
+    }
+
   }
-});
+);
 
 // ============================================================
 // AUTH
@@ -359,17 +512,23 @@ app.post(
   "/api/auth",
   authenticate,
   async (req, res) => {
+
     try {
+
       const user =
         await getOrCreateUser(
           req.telegramUser
         );
 
       const currentEnergy =
-        calculateCurrentEnergy(user);
+        calculateCurrentEnergy(
+          user
+        );
 
       const now =
-        Math.floor(Date.now() / 1000);
+        Math.floor(
+          Date.now() / 1000
+        );
 
       await pool.query(
         `
@@ -381,24 +540,33 @@ app.post(
         [
           currentEnergy,
           now,
-          String(req.telegramUser.id)
+          String(
+            req.telegramUser.id
+          )
         ]
       );
 
       res.json({
+
         user:
           formatUser(
             user,
             currentEnergy
           )
+
       });
+
     } catch (error) {
+
       console.error(error);
 
       res.status(500).json({
-        error: "Authentication failed"
+        error:
+          "Authentication failed"
       });
+
     }
+
   }
 );
 
@@ -410,17 +578,23 @@ app.get(
   "/api/me",
   authenticate,
   async (req, res) => {
+
     try {
+
       const user =
         await getOrCreateUser(
           req.telegramUser
         );
 
       const currentEnergy =
-        calculateCurrentEnergy(user);
+        calculateCurrentEnergy(
+          user
+        );
 
       const now =
-        Math.floor(Date.now() / 1000);
+        Math.floor(
+          Date.now() / 1000
+        );
 
       await pool.query(
         `
@@ -432,7 +606,9 @@ app.get(
         [
           currentEnergy,
           now,
-          String(req.telegramUser.id)
+          String(
+            req.telegramUser.id
+          )
         ]
       );
 
@@ -442,13 +618,18 @@ app.get(
           currentEnergy
         )
       );
+
     } catch (error) {
+
       console.error(error);
 
       res.status(500).json({
-        error: "Could not load player"
+        error:
+          "Could not load player"
       });
+
     }
+
   }
 );
 
@@ -460,14 +641,20 @@ app.post(
   "/api/tap",
   authenticate,
   async (req, res) => {
+
     const client =
       await pool.connect();
 
     try {
-      await client.query("BEGIN");
+
+      await client.query(
+        "BEGIN"
+      );
 
       const telegramId =
-        String(req.telegramUser.id);
+        String(
+          req.telegramUser.id
+        );
 
       const result =
         await client.query(
@@ -480,38 +667,56 @@ app.post(
           [telegramId]
         );
 
-      if (result.rows.length === 0) {
+      if (
+        result.rows.length === 0
+      ) {
+
         throw new Error(
           "Player account not found"
         );
+
       }
 
       const user =
         result.rows[0];
 
       const currentEnergy =
-        calculateCurrentEnergy(user);
+        calculateCurrentEnergy(
+          user
+        );
 
-      if (currentEnergy < 1) {
-        await client.query("ROLLBACK");
+      if (
+        currentEnergy < 1
+      ) {
+
+        await client.query(
+          "ROLLBACK"
+        );
 
         return res.status(400).json({
-          error: "No energy"
+          error:
+            "No energy"
         });
+
       }
 
       const reward =
-        Number(user.tap_power);
+        Number(
+          user.tap_power
+        );
 
       const newCoins =
-        Number(user.coins) +
-        reward;
+        Number(
+          user.coins
+        ) + reward;
 
       const newEnergy =
         currentEnergy - 1;
 
       const newTotalTaps =
-        Number(user.total_taps) + 1;
+        Number(
+          user.total_taps
+        ) + 1;
 
       const newLevel =
         Math.floor(
@@ -519,7 +724,9 @@ app.post(
         ) + 1;
 
       const now =
-        Math.floor(Date.now() / 1000);
+        Math.floor(
+          Date.now() / 1000
+        );
 
       await client.query(
         `
@@ -543,9 +750,12 @@ app.post(
         ]
       );
 
-      await client.query("COMMIT");
+      await client.query(
+        "COMMIT"
+      );
 
       res.json({
+
         coins:
           newCoins,
 
@@ -553,7 +763,9 @@ app.post(
           newEnergy,
 
         maxEnergy:
-          Number(user.max_energy),
+          Number(
+            user.max_energy
+          ),
 
         tapPower:
           reward,
@@ -563,20 +775,28 @@ app.post(
 
         totalTaps:
           newTotalTaps
+
       });
 
     } catch (error) {
-      await client.query("ROLLBACK");
+
+      await client.query(
+        "ROLLBACK"
+      );
 
       console.error(error);
 
       res.status(500).json({
-        error: "Tap failed"
+        error:
+          "Tap failed"
       });
 
     } finally {
+
       client.release();
+
     }
+
   }
 );
 
@@ -593,10 +813,15 @@ app.post(
       await pool.connect();
 
     try {
-      await client.query("BEGIN");
+
+      await client.query(
+        "BEGIN"
+      );
 
       const telegramId =
-        String(req.telegramUser.id);
+        String(
+          req.telegramUser.id
+        );
 
       const rewardSchedule = [
         200,
@@ -608,14 +833,13 @@ app.post(
         2500
       ];
 
-      /*
-        Use UTC calendar dates so all servers
-        behave consistently.
-      */
       const today =
         new Date()
           .toISOString()
-          .slice(0, 10);
+          .slice(
+            0,
+            10
+          );
 
       const rewardResult =
         await client.query(
@@ -629,23 +853,32 @@ app.post(
         );
 
       let streak = 0;
-      let lastClaimDate = null;
+      let lastClaimDate =
+        null;
 
-      if (rewardResult.rows.length > 0) {
+      if (
+        rewardResult.rows.length > 0
+      ) {
+
         streak =
           Number(
-            rewardResult.rows[0].streak
+            rewardResult
+              .rows[0]
+              .streak
           ) || 0;
 
         lastClaimDate =
-          rewardResult.rows[0]
+          rewardResult
+            .rows[0]
             .last_claim_date;
+
       }
 
-      // Prevent two claims on the same day
       if (
-        lastClaimDate === today
+        lastClaimDate ===
+        today
       ) {
+
         await client.query(
           "ROLLBACK"
         );
@@ -654,12 +887,14 @@ app.post(
           error:
             "Daily reward already claimed"
         });
+
       }
 
       let nextStreak = 1;
 
-      // Continue streak if yesterday was claimed
-      if (lastClaimDate) {
+      if (
+        lastClaimDate
+      ) {
 
         const previous =
           new Date(
@@ -680,15 +915,23 @@ app.post(
             86400000
           );
 
-        if (difference === 1) {
+        if (
+          difference === 1
+        ) {
+
           nextStreak =
             streak + 1;
+
         }
+
       }
 
-      // Restart after day 7
-      if (nextStreak > 7) {
+      if (
+        nextStreak > 7
+      ) {
+
         nextStreak = 1;
+
       }
 
       const reward =
@@ -696,7 +939,6 @@ app.post(
           nextStreak - 1
         ];
 
-      // Add reward on server
       const userResult =
         await client.query(
           `
@@ -728,12 +970,13 @@ app.post(
       if (
         userResult.rows.length === 0
       ) {
+
         throw new Error(
           "Player account not found"
         );
+
       }
 
-      // Save reward claim
       await client.query(
         `
         INSERT INTO daily_rewards (
@@ -742,10 +985,12 @@ app.post(
           last_claim_date
         )
         VALUES ($1, $2, $3)
+
         ON CONFLICT (telegram_id)
         DO UPDATE SET
           streak =
             EXCLUDED.streak,
+
           last_claim_date =
             EXCLUDED.last_claim_date
         `,
@@ -756,43 +1001,55 @@ app.post(
         ]
       );
 
-      await client.query("COMMIT");
+      await client.query(
+        "COMMIT"
+      );
 
       const updatedUser =
         userResult.rows[0];
 
       res.json({
+
         reward,
+
         streak:
           nextStreak,
+
         coins:
           Number(
             updatedUser.coins
           ),
+
         energy:
           Number(
             updatedUser.energy
           ),
+
         maxEnergy:
           Number(
             updatedUser.max_energy
           ),
+
         tapPower:
           Number(
             updatedUser.tap_power
           ),
+
         autoMiner:
           Number(
             updatedUser.auto_miner
           ),
+
         level:
           Number(
             updatedUser.level
           ),
+
         totalTaps:
           Number(
             updatedUser.total_taps
           )
+
       });
 
     } catch (error) {
@@ -812,8 +1069,280 @@ app.post(
       });
 
     } finally {
+
       client.release();
+
     }
+
+  }
+);
+
+// ============================================================
+// LEVEL REWARDS
+//
+// Level 1  = 1,000 MINTS
+// Level 2  = 2,000 MINTS
+// Level 3  = 3,000 MINTS
+// ...
+// Level 10 = 10,000 MINTS
+//
+// Rule:
+// reward = level × 1,000
+// ============================================================
+
+app.post(
+  "/api/rewards/level",
+  authenticate,
+  async (req, res) => {
+
+    const client =
+      await pool.connect();
+
+    try {
+
+      await client.query(
+        "BEGIN"
+      );
+
+      const telegramId =
+        String(
+          req.telegramUser.id
+        );
+
+      const requestedLevel =
+        Number(
+          req.body?.level
+        );
+
+      if (
+        !Number.isInteger(
+          requestedLevel
+        ) ||
+        requestedLevel < 1 ||
+        requestedLevel > 10
+      ) {
+
+        await client.query(
+          "ROLLBACK"
+        );
+
+        return res.status(400).json({
+          error:
+            "Invalid reward level"
+        });
+
+      }
+
+      // Exact reward rule
+      const reward =
+        requestedLevel * 1000;
+
+      const userResult =
+        await client.query(
+          `
+          SELECT *
+          FROM users
+          WHERE telegram_id = $1
+          FOR UPDATE
+          `,
+          [telegramId]
+        );
+
+      if (
+        userResult.rows.length === 0
+      ) {
+
+        await client.query(
+          "ROLLBACK"
+        );
+
+        return res.status(404).json({
+          error:
+            "Player not found"
+        });
+
+      }
+
+      const user =
+        userResult.rows[0];
+
+      const currentLevel =
+        Number(
+          user.level
+        );
+
+      // Server checks level
+      if (
+        currentLevel <
+        requestedLevel
+      ) {
+
+        await client.query(
+          "ROLLBACK"
+        );
+
+        return res.status(400).json({
+          error:
+            `You have not reached Level ${requestedLevel}`
+        });
+
+      }
+
+      // Check duplicate claim
+      const claimResult =
+        await client.query(
+          `
+          SELECT level
+          FROM level_rewards
+          WHERE telegram_id = $1
+            AND level = $2
+          FOR UPDATE
+          `,
+          [
+            telegramId,
+            requestedLevel
+          ]
+        );
+
+      if (
+        claimResult.rows.length > 0
+      ) {
+
+        await client.query(
+          "ROLLBACK"
+        );
+
+        return res.status(400).json({
+          error:
+            `Level ${requestedLevel} reward already claimed`
+        });
+
+      }
+
+      // Award MINTS
+      const updatedUser =
+        await client.query(
+          `
+          UPDATE users
+          SET coins = coins + $1
+          WHERE telegram_id = $2
+
+          RETURNING
+            coins,
+            energy,
+            max_energy,
+            tap_power,
+            auto_miner,
+            level,
+            total_taps
+          `,
+          [
+            reward,
+            telegramId
+          ]
+        );
+
+      const now =
+        Math.floor(
+          Date.now() / 1000
+        );
+
+      // Record claim
+      await client.query(
+        `
+        INSERT INTO level_rewards (
+          telegram_id,
+          level,
+          reward,
+          claimed_at
+        )
+        VALUES ($1, $2, $3, $4)
+        `,
+        [
+          telegramId,
+          requestedLevel,
+          reward,
+          now
+        ]
+      );
+
+      await client.query(
+        "COMMIT"
+      );
+
+      const player =
+        updatedUser.rows[0];
+
+      res.json({
+
+        success:
+          true,
+
+        level:
+          requestedLevel,
+
+        reward:
+          reward,
+
+        coins:
+          Number(
+            player.coins
+          ),
+
+        energy:
+          Number(
+            player.energy
+          ),
+
+        maxEnergy:
+          Number(
+            player.max_energy
+          ),
+
+        tapPower:
+          Number(
+            player.tap_power
+          ),
+
+        autoMiner:
+          Number(
+            player.auto_miner
+          ),
+
+        levelCurrent:
+          Number(
+            player.level
+          ),
+
+        totalTaps:
+          Number(
+            player.total_taps
+          )
+
+      });
+
+    } catch (error) {
+
+      await client.query(
+        "ROLLBACK"
+      );
+
+      console.error(
+        "Level reward error:",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          "Could not claim level reward"
+      });
+
+    } finally {
+
+      client.release();
+
+    }
+
   }
 );
 
@@ -822,13 +1351,22 @@ app.post(
 // ============================================================
 
 app.use(
-  (error, req, res, next) => {
-    console.error(error);
+  (
+    error,
+    req,
+    res,
+    next
+  ) => {
+
+    console.error(
+      error
+    );
 
     res.status(500).json({
       error:
         "Internal server error"
     });
+
   }
 );
 
@@ -844,9 +1382,11 @@ async function start() {
     PORT,
     "0.0.0.0",
     () => {
+
       console.log(
         `Mints Coin API running on port ${PORT}`
       );
+
     }
   );
 }
@@ -860,5 +1400,6 @@ start().catch(
     );
 
     process.exit(1);
+
   }
 );
